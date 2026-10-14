@@ -1,0 +1,32 @@
+.git
+.gitattributes
+.gitignore
+
+# Secretos: .env se inyecta por compose (env_file)
+.env
+.env.*
+!.env.example
+
+# Dependencias locales
+vendor
+node_modules
+
+# Contenido generado / subido
+storage/logs/*
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/framework/testing/*
+storage/app/private/*
+storage/app/public/*
+bootstrap/cache/*.php
+
+# Ruido local
+*.tgz
+*.sql
+.phpunit.result.cache
+.idea
+.vscode
+docker-compose*.yml
+Dockerfile
+.dockerignore
