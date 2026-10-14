@@ -1,0 +1,516 @@
+DOCUMENTACIÓN DEL PROYECTO - Sistema de Control de Asistencia
+==============================================================
+
+Este documento describe el ESTADO ACTUAL del proyecto: qué es, cómo está
+construido, qué módulos tiene y cómo se opera. Reemplaza al changelog
+histórico (CAMBIO 1 a CAMBIO 16), que quedó obsoleto tras el refactor de
+la aplicación.
+
+Última actualización: 13/10/2026
+
+
+======================================================================
+1. QUÉ ES EL SISTEMA
+======================================================================
+
+Aplicación web para el control de asistencia de PASANTES (prácticas
+preprofesionales). Tiene dos tipos de usuario:
+
+  * ADMINISTRADORES (guard 'web'): gestionan pasantes, carreras, tutores,
+    usuarios, roles y permisos, asistencias y reportes.
+
+  * PASANTES (guard 'pasante'): entran a un portal propio para marcar su
+    entrada y su salida con foto, consultar su historial y descargar su
+    bitácora y su informe final.
+
+El registro de asistencia del pasante incluye FOTO (tomada con la cámara
+del navegador) y se organiza por JORNADA (matutina, vespertina, nocturna).
+Las fotos son datos privados: se guardan fuera de public/ y solo se sirven
+por rutas protegidas.
+
+
+======================================================================
+2. STACK TÉCNICO
+======================================================================
+
+  * Framework:      Laravel 13.12 (PHP ^8.3)
+  * Permisos:       spatie/laravel-permission ^8.3
+  * PDF:            barryvdh/laravel-dompdf ^3.1
+  * Excel:          maatwebsite/excel ^4.0
+  * Auth UI:        laravel/ui ^4.6
+  * Base de datos:  MySQL en desarrollo (Laragon).
+                    SQLite en memoria para los tests (phpunit.xml).
+  * Zona horaria:   America/Guayaquil (APP_TIMEZONE).
+  * Interfaz:       AdminLTE 3, con JS vanilla + jQuery de AdminLTE,
+                    SweetAlert2 y DataTables. No se usa Alpine ni Vue.
+  * Pruebas:        PHPUnit ^12.5, suites Unit + Feature.
+
+
+======================================================================
+3. ACTORES Y AUTENTICACIÓN
+======================================================================
+
+Existen DOS guards independientes configurados en config/auth.php, de modo
+que ninguna identidad se mezcla con la otra.
+
+  Guard 'web' -> App\Models\User (administradores)
+
+    * Login por EMAIL y contraseña (App\Http\Controllers\Auth\LoginController).
+    * El registro público está DESACTIVADO:
+          Auth::routes(['register' => false]);
+      La ruta GET /register no existe; las cuentas se crean desde el panel.
+    * Solo inician sesión usuarios con estado '1' (LoginController::credentials).
+    * El login fuerza SIEMPRE la guard 'web' y descarta el 'url.intended'
+      cuando apunta a rutas de pasante (evita rebotes).
+
+  Guard 'pasante' -> App\Models\Pasante (Authenticatable propio)
+
+    * El pasante entra con su CÉDULA como usuario y como contraseña (la
+      cédula cifrada). Login en /pasantes/login (PasanteLoginController).
+    * Solo inician sesión pasantes con estado '1'.
+    * Siempre aterriza en asistencias.registrar (no usa intended()).
+
+  Protección contra fuerza bruta:
+
+    * RateLimiter 'login' (AppServiceProvider): 6 intentos por minuto por
+      email / cédula / IP de origen. Se aplica con el middleware
+      throttle:login sobre los POST de login.
+
+
+======================================================================
+4. MODELO DE DATOS
+======================================================================
+
+Tablas propias del sistema (10 migraciones en total):
+
+  users
+    id, name, email (unique), password, estado, timestamps.
+    - 'estado' lo agrega la migración add_estado_to_users_table (varchar).
+
+  carreras
+    id, codigo_carrera (unique), nombre, horas_practicas, estado,
+    timestamps.
+    - 'horas_practicas' es la meta de horas del pasante; se lee SIEMPRE de
+      aquí (no se copia en pasantes).
+
+  tutores
+    id, codigo_docente (unique), nombres, apellidos, carrera_id (FK),
+    estado, foto, timestamps.
+    - carrera_id es NOT NULL con restrictOnDelete: no se puede eliminar una
+      carrera con tutores asignados.
+    - Relaciones: carrera(), pasantes().
+
+  pasantes
+    id, cedula, nombres, apellidos, email, carrera_id (FK), telefono,
+    fecha_ingreso, tutor_id (FK), estado, foto, timestamps.
+    - carrera_id y tutor_id son NOT NULL con restrictOnDelete.
+    - Relaciones: carrera(), tutor(), asistencias(), reportes().
+    - Cast: fecha_ingreso => date; password => hashed.
+
+  asistencias
+    id, pasante_id (FK), fecha (date), jornada, hora_entrada, hora_salida,
+    foto_entrada, foto_salida, timestamps.
+    - 'jornada' es un enum de MySQL: matutina / vespertina / nocturna.
+    - Entrada y salida viven en la MISMA fila: hora_salida null = turno
+      abierto (marcó entrada pero todavía no la salida).
+
+  reportes
+    id, pasante_id (FK), ruta_pdf, generado_por (FK users), fecha_generacion,
+    estado, timestamps.
+    - Un pasante tiene como máximo UN informe con estado '1' (activo). Esa
+      fila es la que CIERRA su periodo de registro.
+    - No guarda horas ni periodos: eso se lee de asistencias/pasantes al
+      armar el documento (una sola fuente de verdad).
+
+Tablas de infraestructura (Laravel): users/cache/jobs/sessions y las de
+spatie/laravel-permission (roles, permissions, model_has_roles, etc.).
+
+
+======================================================================
+5. ARQUITECTURA DE LA APLICACIÓN
+======================================================================
+
+La app sigue un esquema por capas:
+
+  HTTP (controladores delgados)
+      -> validación (Form Requests)
+      -> lógica de dominio (Servicios / objetos de valor / Enums)
+      -> Eloquent (Modelos)
+      -> Base de datos
+
+Los controladores son ADAPTADORES HTTP: toman la petición, delegan y
+devuelven vista o redirección. La lógica de negocio vive en app/Services.
+Los controladores están separados por ACTOR y RESPONSABILIDAD (no por
+módulo solamente).
+
+------------------------------------------------------------------------
+5.1 Controladores (app/Http/Controllers)
+------------------------------------------------------------------------
+
+  AdminController          Panel raíz (/) con contadores y fecha.
+  PasanteController        CRUD de pasantes + foto privada.
+  CarreraController        CRUD de carreras.
+  TutorController          CRUD de tutores + foto privada.
+  UsuarioController        CRUD de usuarios + vista de accesos (roles y
+                           permisos del usuario) + destroy protegido.
+  RoleController           CRUD de roles (sin show); protege roles de sistema.
+  PermissionController     Listado de permisos (solo lectura).
+  AsistenciaController     Asistencias del ADMINISTRADOR: index/create/store/
+                           show/edit/update/destroy + foto (correcciones).
+  AsistenciaPortalController  Portal del PASANTE: registrar/registros/
+                           historial/marcar + fotoPublica.
+  ReporteController        Reportes: index + informe final (vistaPrevia,
+                           generar, descargarInforme, anular, miInforme).
+  ReporteListadoController Listados simples PDF/Excel de usuarios, pasantes,
+                           carreras y tutores.
+  ReporteBitacoraController  Bitácoras PDF/Excel: admin (asistenciaPdf/Excel)
+                           y pasante (miBitacoraPdf/Excel).
+  Auth\LoginController             Login de administradores (guard web).
+  Auth\PasanteLoginController      Login del portal de pasantes (guard pasante).
+  Auth\{Forgot,Reset,Confirm}PasswordController  Scaffolding de laravel/ui.
+
+------------------------------------------------------------------------
+5.2 Servicios y objetos de valor (app/Services)
+------------------------------------------------------------------------
+
+  RegistroAsistencia    Reglas del autoregistro del pasante: una entrada por
+                        jornada, la salida completa un turno abierto, sin fin
+                        de semana ni después del cierre del periodo.
+  BitacoraAsistencia    Arma la bitácora día a día y los totales del periodo
+                        (práctica vs. apoyo). La usan las 4 bitácoras y el
+                           informe final.
+  FotoPrivada           Guarda / reemplaza / borra / sirve las fotos del
+                        disco privado ('local' => storage/app/private).
+  AccesoPasante         Crea y asigna el rol y los permisos del pasante
+                           (guard 'pasante'), y sincroniza las cuentas.
+  PermisoService        Agrupa los permisos de la guard 'web' por recurso
+                           para las matrices de roles y accesos.
+  RangoFechas (VO)      Rango de fechas ya normalizado (tope de hoy, orden,
+                           tope de un año). Lo usan las bitácoras.
+  ResultadoRegistro     Resultado (éxito/mensaje) de un marcado de asistencia.
+
+------------------------------------------------------------------------
+5.3 Form Requests (app/Http/Requests)
+------------------------------------------------------------------------
+
+Toda la validación de entrada vive aquí (los controladores no usan
+validate() salvo contadas excepciones).
+
+  Pasantes:   StorePasanteRequest / UpdatePasanteRequest
+  Carreras:   StoreCarreraRequest / UpdateCarreraRequest
+  Tutores:    StoreTutorRequest / UpdateTutorRequest
+  Usuarios:   StoreUsuarioRequest / UpdateUsuarioRequest /
+              UpdateAccesosUsuarioRequest
+  Roles:      StoreRoleRequest / UpdateRoleRequest
+  Asistencias: AsistenciaRequest (base abstracta) -> StoreAsistenciaRequest,
+              UpdateAsistenciaRequest; MarcarAsistenciaRequest;
+              FiltroAsistenciaRequest; BitacoraAsistenciaRequest.
+
+------------------------------------------------------------------------
+5.4 Enums (app/Enums)
+------------------------------------------------------------------------
+
+  Jornada    matutina / vespertina / nocturna.
+             - valores(): para las reglas Rule::in.
+             - opciones(): mapa valor => etiqueta para los <select>.
+             Reemplaza al array 'jornadas' que antes vivía en config.
+
+------------------------------------------------------------------------
+5.5 Configuración propia
+------------------------------------------------------------------------
+
+  config/asistencias.php    minutos_meta_diarios (240 = 4 h por día).
+                            Los minutos por encima de la meta se reportan
+                            aparte como "apoyo al área".
+
+  config/permisos.php       roles_sistema (['admin','subadmin']): roles que
+                            no se pueden eliminar desde la pantalla de Roles.
+                            permisos_pasante: permisos de la guard 'pasante'.
+
+  config/permission.php     Configuración de spatie/laravel-permission.
+
+
+======================================================================
+6. RUTAS (resumen por módulo)
+======================================================================
+
+Todas las rutas están en routes/web.php. Los NOMBRES de ruta y las URIs
+se mantienen estables.
+
+  Públicas / autenticación
+    GET  /                       inicio            (auth)
+    GET  /login ...              Auth::routes(['register' => false])
+    GET  /pasantes/login         pasantes.login
+    POST /pasantes/login         pasantes.login.enviar  (throttle:login)
+    POST /pasantes/logout        pasantes.logout        (auth:pasante)
+
+  Portal del pasante (guard 'pasante', fuera del grupo 'auth' web)
+    GET  /asistencias/registrar      asistencias.registrar
+    GET  /asistencias/registros      asistencias.registros
+    GET  /asistencias/historial      asistencias.historial
+    POST /asistencias/marcar         asistencias.marcar
+    GET  /asistencias/mis-fotos/{asistencia}/{tipo}
+                                     asistencias.foto.publica
+    GET  /mis-reportes/bitacora/pdf  reportes.mi.bitacora.pdf
+    GET  /mis-reportes/bitacora/excel reportes.mi.bitacora.excel
+    GET  /mis-reportes/informe       reportes.mi.informe
+
+  Administración (auth) - las rutas se declaran por ACCIÓN para poder
+  aplicar el permiso correcto con el middleware can:
+
+    /pasantes    crear/editar/eliminar/ver-pasantes  + /pasantes/{p}/foto
+    /carreras    crear/editar/eliminar/ver-carreras
+    /tutores     crear/editar/eliminar/ver-tutores   + /tutores/{t}/foto
+    /usuarios    crear/editar/eliminar/ver-usuarios
+                 + /usuarios/{user}/accesos (asignar-permisos-a-usuario)
+    /asistencias crear/editar/eliminar/ver-pasantes  + /asistencias/{a}/foto/{tipo}
+    /roles       crear/editar/eliminar/ver-roles (sin show)
+    /permisos    ver-permisos (solo lectura)
+    /reportes    ver-reporte-asistencias (index, listados, bitácoras,
+                 informe final)
+
+  NOTA: el recurso /asistencias reutiliza los permisos de pasantes
+  (crear/editar/eliminar/ver-pasantes). Es intencional: quien administra
+  asistencias es quien administra pasantes.
+
+Los recursos se declaran en CUATRO grupos parciales (create/store,
+edit/update, destroy, index/show) para poder aplicar un permiso distinto a
+cada acción. El ORDEN importa: create/store van antes que index/show para
+que GET /recurso/create no caiga en el comodín /recurso/{id}.
+
+
+======================================================================
+7. MÓDULOS
+======================================================================
+
+  Panel (/)
+    Contadores de pasantes, carreras, tutores y usuarios + fecha en español.
+
+  Pasantes
+    CRUD completo. Muestra carrera, tutor y horas de práctica (leídas de la
+    relación). El <select> de tutores se filtra por la carrera elegida y,
+    además, el servidor exige que el tutor pertenezca a esa carrera
+    (ValidaTutorDeCarrera). Foto privada. Al guardar se asegura el acceso del
+    pasante (rol 'pasante' + contraseña = cédula si no tiene).
+
+  Carreras
+    CRUD completo. 'horas_practicas' es la meta de horas de sus pasantes.
+    No se puede eliminar una carrera con pasantes inscritos.
+
+  Tutores
+    CRUD completo con foto privada. No se puede eliminar un tutor con
+    pasantes asignados.
+
+  Usuarios
+    CRUD de cuentas de administrador + estado Activo/Inactivo. Vista de
+    "Accesos" para asignar roles y permisos DIRECTOS a un usuario. No se
+    puede eliminar la propia cuenta en sesión.
+
+  Roles y permisos
+    CRUD de roles (guard 'web'). Los roles de sistema (config/permisos.php)
+    no se pueden eliminar. Vista de permisos como solo lectura.
+
+  Asistencias (administrador)
+    CRUD manual para altas y correcciones de turnos (fecha, jornada,
+    horas), con filtros. Puede cargar fines de semana (la vista solo avisa).
+    Fotos servidas por ruta protegida.
+
+  Portal del pasante
+    - registrar: marca entrada/salida del día con la cámara, elige jornada.
+    - registros: los turnos de hoy.
+    - historial: todos sus turnos desde su fecha de ingreso, con apoyo por
+      día.
+    - bitácora propia (PDF/Excel) e informe final (si ya fue generado).
+
+  Reportes
+    - index: tabla de módulos con sus botones de descarga.
+    - Listados PDF/Excel: usuarios, pasantes, carreras, tutores.
+    - Bitácoras PDF/Excel: por pasante y rango (admin) y la propia
+      (pasante).
+    - Informe final: vista previa (no guarda), generar (guarda PDF en disco
+      privado y cierra el periodo), descargar, anular (reabre el periodo).
+
+
+======================================================================
+8. ROLES Y PERMISOS
+======================================================================
+
+Sistema: spatie/laravel-permission, dos guards ('web' y 'pasante').
+
+  Permisos de administrador (guard 'web', PermissionSeeder):
+    ver/crear/editar/eliminar-roles, ver-permisos,
+    asignar-permisos-a-usuario,
+    ver/crear/editar/eliminar-usuarios,
+    ver/crear/editar/eliminar-pasantes,
+    ver/crear/editar/eliminar-carreras,
+    ver/crear/editar/eliminar-tutores,
+    ver-reporte-asistencias.
+
+  Roles del sistema (RoleSeeder):
+    admin    -> todos los permisos.
+    subadmin -> ver-pasantes, crear-pasantes, editar-pasantes, ver-carreras,
+                ver-tutores, ver-reporte-asistencias.
+
+  Permisos del pasante (guard 'pasante', creados por AccesoPasante):
+    marcar-asistencia, ver-propio-registro, ver-propio-historial.
+
+  Cómo se aplican:
+    * En rutas, con el middleware can:nombre-del-permiso.
+    * El rol 'pasante' y sus permisos se siembran en el arranque
+      (PasanteRoleSeeder) y se aseguran al dar de alta o editar un pasante
+      (App\Services\AccesoPasante); el comando pasantes:sincronizar-acceso los
+      regenera como tarea de mantenimiento.
+    * PermisoService::agruparPorRecurso() alimenta las matrices de las
+      pantallas de roles y de accesos del usuario.
+
+
+======================================================================
+9. FOTOS PRIVADAS
+======================================================================
+
+Las fotos (pasantes, tutores y asistencias) son datos sensibles: se guardan
+en el disco 'local' (storage/app/private), NUNCA en public/.
+
+  * App\Services\FotoPrivada centraliza guardar / borrar / reemplazar /
+    servir. La política de privacidad vive en un solo lugar.
+  * Se sirven solo por rutas protegidas:
+      - /pasantes/{pasante}/foto        (can:ver-pasantes)
+      - /tutores/{tutor}/foto           (can:ver-tutores)
+      - /asistencias/{asistencia}/foto/{tipo}   (can:ver-pasantes)
+      - /asistencias/mis-fotos/{asistencia}/{tipo}  (guard pasante, valida
+        que el turno sea del pasante en sesión)
+  * FotoPrivada::servir() responde 404 si la ruta es null o el archivo no
+    existe, y nunca expone rutas del disco.
+  * No se necesita storage:link para estas fotos: se sirven por controlador.
+
+
+======================================================================
+10. COMANDOS ARTISAN PROPIOS
+======================================================================
+
+  php artisan admin:crear {email?} {--name=} {--password=}
+      Crea o promueve un usuario con el rol admin (guard web). Es la ÚNICA vía
+      para crear el primer administrador: no se siembra ningún usuario, así no
+      queda ninguna credencial en el repositorio. La contraseña se pide de
+      forma oculta si no se pasa. Volver a ejecutarlo con un correo existente
+      lo promueve y actualiza su contraseña.
+
+  php artisan pasantes:sincronizar-acceso   (MANTENIMIENTO)
+      Asegura el rol y los permisos del pasante y genera la contraseña (su
+      cédula) a los pasantes que no tengan ninguna. En una instalación limpia
+      no hace falta: el rol ya lo siembra PasanteRoleSeeder. Delegado en
+      App\Services\AccesoPasante.
+
+
+======================================================================
+11. SEEDERS Y DATOS DE EJEMPLO
+======================================================================
+
+database/seeders/DatabaseSeeder.php orquesta en este orden:
+
+  Siempre (cualquier entorno):
+    PermissionSeeder   -> crea los permisos de la guard 'web'.
+    RoleSeeder         -> crea admin y subadmin con sus permisos.
+    PasanteRoleSeeder  -> crea el rol 'pasante' (guard 'pasante') y sus
+                          permisos, reutilizando App\Services\AccesoPasante.
+
+  El usuario administrador NO se siembra: se crea con php artisan admin:crear.
+
+  Solo fuera de producción:
+    CarreraSeeder      -> 5 carreras.
+    TutorSeeder        -> 5 tutores.
+    PasanteSeeder      -> 10 pasantes.
+
+Factories: UserFactory, CarreraFactory, TutorFactory, PasanteFactory.
+
+
+======================================================================
+12. PRUEBAS
+======================================================================
+
+La suite corre sobre SQLite en memoria (phpunit.xml: DB_CONNECTION=sqlite,
+DB_DATABASE=:memory:). Los tests NUNCA tocan la base de datos de desarrollo.
+
+Comando:
+    php artisan optimize:clear
+    php artisan test --compact
+
+Estado actual: 255 pruebas, 759 aserciones, todas en verde.
+
+Suites:
+  tests/Unit
+    ExampleTest, RangoFechasTest.
+  tests/Feature
+    AsistenciaCalculoTest, AsistenciaCrudTest, AsistenciaFlujoPublicoTest,
+    BitacoraAsistenciaTest, FotoPrivacidadTest, MiddlewareControladorTest,
+    ModuloPermisosTest, PantallasPublicasTest, PasanteCumplimientoTest,
+    PasanteTest, ReporteTest, RoleGestionTest, TutorTest,
+    UsuarioSeguridadTest, ExampleTest.
+
+Cobertura funcional: flujo de marcado del pasante y sus reglas de negocio,
+cálculo de horas y apoyo, privacidad de fotos, CRUD de asistencias, CRUD de
+pasantes y tutores (con su carrera), permisos por rol, seguridad de usuarios,
+generación de reportes y pantallas públicas.
+
+
+======================================================================
+12b. OPERACIÓN / PUESTA EN MARCHA
+======================================================================
+
+  Guía completa: ver INSTALL.md en la raíz del proyecto.
+
+  Instalación:
+    1) composer install
+    2) Copiar .env.example a .env y configurar la base de datos.
+    3) php artisan key:generate
+    4) php artisan migrate --seed
+    5) php artisan admin:crear   (crea el primer administrador)
+
+  Administrador inicial:
+    - No hay credenciales por defecto ni versionadas. Se crea con:
+        php artisan admin:crear
+      que pide correo y contraseña (oculta); también admite argumentos para
+      despliegues automatizados.
+
+  Acceso de pasantes:
+    - El rol 'pasante' y sus permisos se siembran con migrate --seed y se
+      aseguran al crear/editar un pasante.
+    - El comando pasantes:sincronizar-acceso es de mantenimiento (backfill).
+    - El pasante entra en /pasantes/login con su cédula como usuario y
+      contraseña.
+
+  Copia limpia sin datos de ejemplo (producción):
+    - La app NO siembra carreras/tutores/pasantes si APP_ENV=production.
+    - El rol 'pasante' y los roles/permisos base SÍ se siembran en producción.
+
+
+======================================================================
+13. CONVENCIONES Y DECISIONES DE DISEÑO
+======================================================================
+
+  * Enlaces con route(), nunca URL escrita a mano.
+  * Controladores delgados y separados por ACTOR/RESPONSABILIDAD; la lógica
+    de dominio vive en servicios.
+  * Validación en Form Requests; los controladores persisten datos
+    validados (mass assignment).
+  * Una sola fuente de verdad por dato:
+      - horas de práctica -> carreras.horas_practicas
+      - totales del periodo -> se calculan desde asistencias
+      - lista de jornadas -> App\Enums\Jornada
+      - roles de sistema y permisos del pasante -> config/permisos.php
+  * Fotos siempre en disco privado y servidas por rutas protegidas.
+  * Los nombres de ruta y las URIs son estables para no romper enlaces.
+  * Mensajes de éxito/error y reglas de negocio se conservan entre versiones.
+  * Los tests corren contra SQLite en memoria; jamás tocan la base de
+    desarrollo.
+
+  Alcance actual:
+  * El tutor está ligado a una carrera (FK). El <select> de tutores del
+    formulario de pasantes se filtra por la carrera elegida (JS en la vista;
+    al editar se conserva el tutor guardado aunque no coincida). En el
+    servidor, Store/UpdatePasanteRequest usan el trait
+    App\Http\Requests\Concerns\ValidaTutorDeCarrera: rechazan un tutor que no
+    sea de la carrera elegida con el mensaje "El tutor seleccionado no
+    pertenece a la carrera elegida."
+  * 'pasantes.carrera_id' y 'tutor_id' son NOT NULL: no se puede registrar
+    un pasante sin carrera ni tutor.
