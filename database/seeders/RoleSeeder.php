@@ -23,6 +23,7 @@ class RoleSeeder extends Seeder
             'ver-carreras',
             'ver-tutores',
             'ver-reporte-asistencias',
+            'ver-feriados',
         ];
 
         $subadmin->syncPermissions($subadminPermissions);

@@ -8,7 +8,6 @@ use App\Models\Pasante;
 use App\Models\Tutor;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Carbon;
 use Tests\TestCase;
 
 class AsistenciaCalculoTest extends TestCase
@@ -236,27 +235,5 @@ class AsistenciaCalculoTest extends TestCase
 
         $this->assertSame(0, $turno->minutosRegistrados());
         $this->assertSame('00:00:00', $turno->totalHoras());
-    }
-
-    /* ---------------- Dias habiles ---------------- */
-
-    public function test_los_dias_de_semana_son_habiles(): void
-    {
-        // 05 al 09 de octubre de 2026: lunes a viernes
-        foreach (['2026-10-05', '2026-10-06', '2026-10-07', '2026-10-08', '2026-10-09'] as $fecha) {
-            $this->assertTrue(Asistencia::esDiaHabil($fecha), "{$fecha} deberia ser habil");
-        }
-    }
-
-    public function test_el_sabado_y_el_domingo_no_son_habiles(): void
-    {
-        $this->assertFalse(Asistencia::esDiaHabil('2026-10-10')); // sabado
-        $this->assertFalse(Asistencia::esDiaHabil('2026-10-11')); // domingo
-    }
-
-    public function test_la_comprobacion_de_dia_habil_acepta_un_objeto_carbon(): void
-    {
-        $this->assertTrue(Asistencia::esDiaHabil(Carbon::parse('2026-10-05 14:30:00')));
-        $this->assertFalse(Asistencia::esDiaHabil(Carbon::parse('2026-10-10 08:00:00')));
     }
 }

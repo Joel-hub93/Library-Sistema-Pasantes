@@ -17,6 +17,10 @@ use Illuminate\Support\Carbon;
  */
 class BitacoraAsistencia
 {
+    public function __construct(
+        private readonly CalendarioLaboral $calendario,
+    ) {}
+
     /**
      * Filas de la bitacora: un renglon por dia habil del rango.
      *
@@ -40,7 +44,7 @@ class BitacoraAsistencia
         $filas = [];
 
         for ($dia = $desde->copy(); $dia->lessThanOrEqualTo($hasta); $dia->addDay()) {
-            if (! Asistencia::esDiaHabil($dia)) {
+            if (! $this->calendario->esHabil($dia)) {
                 continue;
             }
 
@@ -105,7 +109,7 @@ class BitacoraAsistencia
             ? $pasante->asistencias
             : $pasante->asistencias()->enRango($desde, $hasta)->get();
 
-        $turnos = $turnos->filter(fn ($turno) => Asistencia::esDiaHabil($turno->fecha));
+        $turnos = $turnos->filter(fn ($turno) => $this->calendario->esHabil($turno->fecha));
 
         $cumplimiento = 0;
         $apoyo = 0;

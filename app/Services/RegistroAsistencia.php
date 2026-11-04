@@ -12,14 +12,35 @@ use Illuminate\Support\Carbon;
  * Registro de asistencia del pasante (portal con guard 'pasante').
  *
  * Concentra las reglas del autoregistro: una entrada por jornada, la salida
- * solo completa un turno ya abierto, nunca se registra en fin de semana ni
- * despues de que el informe final cerro el periodo. El controlador queda como
- * adaptador HTTP.
+ * solo completa un turno ya abierto, nunca se registra en un dia no habil
+ * (fin de semana o feriado) ni despues de que el informe final cerro el
+ * periodo. El controlador queda como adaptador HTTP.
  */
 class RegistroAsistencia
 {
-    public function __construct(private readonly FotoPrivada $fotos)
+    public function __construct(
+        private readonly FotoPrivada $fotos,
+        private readonly CalendarioLaboral $calendario,
+    ) {}
+
+    /**
+     * Devuelve un error si hoy no es hábil, o null si se puede registrar.
+     */
+    private function validarDiaHabil(): ?ResultadoRegistro
     {
+        $hoy = Carbon::today();
+
+        if ($this->calendario->esHabil($hoy)) {
+            return null;
+        }
+
+        $feriado = $this->calendario->feriado($hoy);
+
+        return ResultadoRegistro::error(
+            $feriado
+                ? 'Hoy es feriado'.($feriado->nombre ? ' ('.$feriado->nombre.')' : '').': no se registran asistencias.'
+                : 'No se registran asistencias en sábado ni domingo.'
+        );
     }
 
     /**
@@ -31,6 +52,9 @@ class RegistroAsistencia
      */
     public function marcarEntrada(Pasante $pasante, string $jornada, UploadedFile $foto): ResultadoRegistro
     {
+        if ($error = $this->validarDiaHabil()) {
+            return $error;
+        }
         if ($this->turnoDeHoy($pasante, $jornada)) {
             return ResultadoRegistro::error('Ya registraste tu entrada para esta jornada.');
         }
@@ -53,6 +77,9 @@ class RegistroAsistencia
      */
     public function marcarSalida(Pasante $pasante, string $jornada, UploadedFile $foto): ResultadoRegistro
     {
+        if ($error = $this->validarDiaHabil()) {
+            return $error;
+        }
         $turno = $this->turnoDeHoy($pasante, $jornada);
 
         if (! $turno) {
@@ -121,7 +148,7 @@ class RegistroAsistencia
         $faltantes = 0;
 
         for ($dia = $inicio->copy(); $dia->lessThanOrEqualTo($ayer); $dia->addDay()) {
-            if (Asistencia::esDiaHabil($dia) && ! in_array($dia->toDateString(), $registrados)) {
+            if ($this->calendario->esHabil($dia) && ! in_array($dia->toDateString(), $registrados)) {
                 $faltantes++;
             }
         }

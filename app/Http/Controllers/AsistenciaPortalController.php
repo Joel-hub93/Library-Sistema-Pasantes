@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Enums\Jornada;
 use App\Http\Requests\MarcarAsistenciaRequest;
 use App\Models\Asistencia;
+use App\Services\CalendarioLaboral;
 use App\Services\FotoPrivada;
 use App\Services\RegistroAsistencia;
 use Illuminate\Contracts\View\View;
@@ -27,8 +28,8 @@ class AsistenciaPortalController extends Controller
     public function __construct(
         private readonly FotoPrivada $fotos,
         private readonly RegistroAsistencia $registro,
-    ) {
-    }
+        private readonly CalendarioLaboral $calendario,
+    ) {}
 
     /**
      * Pantalla de registro de asistencia del pasante autenticado.
@@ -45,7 +46,8 @@ class AsistenciaPortalController extends Controller
             'jornadas' => $this->jornadas(),
             'estadoJornadas' => $this->estadoJornadas($turnosHoy),
             'jornadaSeleccionada' => $this->jornadaSeleccionada($turnosHoy),
-            'diaHabil' => Asistencia::esDiaHabil(Carbon::today()),
+            'diaHabil' => $this->calendario->esHabil(Carbon::today()),
+            'feriadoHoy' => $this->calendario->feriado(Carbon::today()),
             'periodoCerrado' => $pasante->informeGenerado(),
         ]);
     }
@@ -167,15 +169,12 @@ class AsistenciaPortalController extends Controller
      * Es una sola accion y no dos porque el flujo es una vista unica: el
      * pasante elige que esta marcando, se toma la foto y se envia. La fecha y
      * la hora las toma el servidor, asi que el cliente no puede mandarlas. A
-     * diferencia del administrador, el pasante no registra en sabado ni domingo.
+     * diferencia del administrador, el pasante no registra en dias no habiles
+     * (fin de semana o feriado).
      */
     public function marcar(MarcarAsistenciaRequest $request): RedirectResponse
     {
         $pasante = $request->user('pasante');
-
-        if (! Asistencia::esDiaHabil(Carbon::today())) {
-            return back()->with('error', 'No se registran asistencias en sábado ni domingo.');
-        }
 
         if ($this->registro->periodoCerrado($pasante->id)) {
             return back()->with('error', 'Tu informe final ya fue generado: el periodo de registro quedo cerrado.');

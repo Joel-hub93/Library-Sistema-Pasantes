@@ -51,8 +51,7 @@
                             class="fas fa-bars"></i></a>
                 </li>
                 <li class="nav-item d-none d-sm-inline-block">
-                    <a href="{{ $portada }}"
-                        class="nav-link">Sistema de Control de Asistencia</a>
+                    <a href="{{ $portada }}" class="nav-link">Sistema de Control de Asistencia</a>
                 </li>
             </ul>
 
@@ -84,13 +83,13 @@
                 @endif
 
                 @auth
-                {{-- Pantalla completa: util para revisar tablas largas. --}}
-                <li class="nav-item">
-                    <a class="nav-link" data-widget="fullscreen" href="#" role="button"
-                        title="Pantalla completa">
-                        <i class="fas fa-expand-arrows-alt"></i>
-                    </a>
-                </li>
+                    {{-- Pantalla completa: util para revisar tablas largas. --}}
+                    <li class="nav-item">
+                        <a class="nav-link" data-widget="fullscreen" href="#" role="button"
+                            title="Pantalla completa">
+                            <i class="fas fa-expand-arrows-alt"></i>
+                        </a>
+                    </li>
                 @endauth
             </ul>
         </nav>
@@ -99,10 +98,9 @@
         <!-- Main Sidebar Container -->
         <aside class="main-sidebar sidebar-dark-primary elevation-4">
             <!-- Brand Logo -->
-            <a href="{{ $portada }}"
-                class="brand-link">
-                <img src="{{ asset('img/Logo.jpg') }}" alt="Logo-Principal"
-                    class="brand-image img-circle elevation-4" style="opacity: .8">
+            <a href="{{ $portada }}" class="brand-link">
+                <img src="{{ asset('img/Logo.jpg') }}" alt="Logo-Principal" class="brand-image img-circle elevation-4"
+                    style="opacity: .8">
                 <span class="brand-text font-weight-light">Library-TUVN</span>
             </a>
 
@@ -112,7 +110,8 @@
                 <div class="user-panel mt-3 pb-3 mb-3 d-flex">
                     <div class="info">
                         @if ($esPasante)
-                            <a href="{{ route('asistencias.registrar') }}">{{ $pasanteSesion->apellidos }} {{ $pasanteSesion->nombres }}</a>
+                            <a href="{{ route('asistencias.registrar') }}">{{ $pasanteSesion->apellidos }}
+                                {{ $pasanteSesion->nombres }}</a>
                         @else
                             <a href="#">{{ Auth::user()->name ?? 'Usuario' }}</a>
                         @endif
@@ -239,7 +238,7 @@
                             </li>
                         @endcan
                         {{-- Gestión de Pasantes --}}
-@can('ver-pasantes')
+                        @can('ver-pasantes')
                             <li class="nav-item {{ request()->routeIs('pasantes.*') ? 'menu-open' : '' }}">
                                 <a href="#"
                                     class="nav-link {{ request()->routeIs('pasantes.*') ? 'active' : '' }}">
@@ -361,7 +360,18 @@
                                             <p>Lista de Asistencias</p>
                                         </a>
                                     </li>
-                                    </ul>
+                                </ul>
+                            </li>
+                        @endcan
+
+                        {{-- Feriados --}}
+                        @can('ver-feriados')
+                            <li class="nav-item">
+                                <a href="{{ route('feriados.index') }}"
+                                    class="nav-link {{ request()->routeIs('feriados.*') ? 'active' : '' }}">
+                                    <i class="nav-icon fas fa-calendar-times"></i>
+                                    <p>Feriados</p>
+                                </a>
                             </li>
                         @endcan
 
@@ -466,7 +476,7 @@
 
                 var completo = String($(this).data('completo')) === '1';
 
-                if (! completo) {
+                if (!completo) {
                     mostrarToast('error', 'Error al generar informe final',
                         'Aún no has completado tus horas de prácticas.');
                     return;

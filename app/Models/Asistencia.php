@@ -127,25 +127,14 @@ class Asistencia extends Model
     }
 
     /**
-     * Si una fecha es dia habil para registrar asistencia.
+     * Si la fecha del turno cae en sábado o domingo.
      *
-     * El pasante no registra sabado ni domingo. El administrador si puede
-     * cargar esas fechas, por eso el filtro vive aca y no en las vistas.
-     */
-    public static function esDiaHabil(Carbon|string $fecha): bool
-    {
-        return ! Carbon::parse($fecha)->startOfDay()->isWeekend();
-    }
-
-    /**
-     * Si la fecha del turno cae en sabado o domingo.
-     *
-     * El administrador si puede registrar esos dias, por eso la vista solo lo
+     * El administrador sí puede registrar esos días, por eso la vista solo lo
      * muestra como aviso y no lo bloquea.
      */
     public function esFinDeSemana(): bool
     {
-        return ! self::esDiaHabil($this->fecha);
+        return Carbon::parse($this->fecha)->startOfDay()->isWeekend();
     }
 
     /**

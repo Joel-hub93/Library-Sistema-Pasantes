@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Services\CalendarioLaboral;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -143,9 +144,15 @@ class Pasante extends Authenticatable
     {
         $meta = Asistencia::minutosMetaDiarios();
 
+        // Eloquent no permite inyectar dependencias por constructor en un
+        // modelo, asi que el calendario se resuelve aqui. Es el unico punto de
+        // este modelo que consulta los feriados.
+        $calendario = app(CalendarioLaboral::class);
+
         $porDia = [];
 
         $this->asistencias
+            ->filter(fn (Asistencia $turno) => ! $calendario->esFeriado($turno->fecha))
             ->groupBy(fn (Asistencia $turno) => $turno->fecha->toDateString())
             ->each(function ($turnos) use (&$porDia, $meta) {
                 $registrados = $turnos->sum(fn (Asistencia $turno) => $turno->minutosRegistrados());
@@ -240,10 +247,12 @@ class Pasante extends Authenticatable
             $desde = $hasta->copy();
         }
 
+        $calendario = app(CalendarioLaboral::class);
+
         $habiles = 0;
 
         for ($dia = $desde->copy(); $dia->lessThanOrEqualTo($hasta); $dia->addDay()) {
-            if (Asistencia::esDiaHabil($dia)) {
+            if ($calendario->esHabil($dia)) {
                 $habiles++;
             }
         }
@@ -254,7 +263,7 @@ class Pasante extends Authenticatable
 
         $asistidos = $this->asistencias
             ->filter(fn (Asistencia $turno) => $turno->fecha->betweenIncluded($desde, $hasta)
-                && Asistencia::esDiaHabil($turno->fecha))
+                && $calendario->esHabil($turno->fecha))
             ->groupBy(fn (Asistencia $turno) => $turno->fecha->toDateString())
             ->count();
 

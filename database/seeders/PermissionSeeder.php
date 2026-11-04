@@ -33,6 +33,9 @@ class PermissionSeeder extends Seeder
             'editar-tutores',
             'eliminar-tutores',
             'ver-reporte-asistencias',
+            'ver-feriados',
+            'crear-feriados',
+            'eliminar-feriados',
         ];
 
         foreach ($permissions as $permission) {

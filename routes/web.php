@@ -5,6 +5,7 @@ use App\Http\Controllers\AsistenciaController;
 use App\Http\Controllers\AsistenciaPortalController;
 use App\Http\Controllers\Auth\PasanteLoginController;
 use App\Http\Controllers\CarreraController;
+use App\Http\Controllers\FeriadoController;
 use App\Http\Controllers\PasanteController;
 use App\Http\Controllers\PermissionController;
 use App\Http\Controllers\ReporteBitacoraController;
@@ -118,6 +119,15 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/pasantes/{pasante}/foto', [PasanteController::class, 'foto'])
         ->name('pasantes.foto')->middleware('can:ver-pasantes');
 
+    // Gestion de Feriados
+    Route::get('/feriados', [FeriadoController::class, 'index'])
+        ->name('feriados.index')->middleware('can:ver-feriados');
+
+    Route::post('/feriados', [FeriadoController::class, 'store'])
+        ->name('feriados.store')->middleware('can:crear-feriados');
+
+    Route::delete('/feriados/{feriado}', [FeriadoController::class, 'destroy'])
+        ->name('feriados.destroy')->middleware('can:eliminar-feriados');
     // Gestion de Carreras
     Route::resource('/carreras', CarreraController::class)
         ->only(['create', 'store'])->middleware('can:crear-carreras');

@@ -4,6 +4,7 @@ namespace App\Http\Requests;
 
 use App\Enums\Jornada;
 use App\Models\Asistencia;
+use App\Services\CalendarioLaboral;
 use Closure;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -52,11 +53,41 @@ abstract class AsistenciaRequest extends FormRequest
     {
         return [
             'pasante_id' => ['required', 'integer', 'exists:pasantes,id'],
-            'fecha' => ['required', 'date_format:Y-m-d', $this->reglaSinDuplicado($asistencia)],
+            'fecha' => [
+                'bail',
+                'required',
+                'date_format:Y-m-d',
+                $this->reglaFeriado($asistencia),
+                $this->reglaSinDuplicado($asistencia),
+            ],
             'jornada' => ['required', Rule::in(Jornada::valores())],
             'hora_entrada' => ['required', 'date_format:H:i'],
             'hora_salida' => ['nullable', 'date_format:H:i', 'after:hora_entrada'],
         ];
+    }
+
+    /**
+     * Impide registrar asistencias en fechas marcadas como feriado.
+     *
+     * Al editar se permite conservar la misma fecha: si el feriado se declaro
+     * despues del registro, el administrador aun puede corregir horas y jornada.
+     */
+    private function reglaFeriado(?Asistencia $asistencia = null): Closure
+    {
+        return function (string $attribute, mixed $value, Closure $fail) use ($asistencia) {
+            $fechaOriginal = $asistencia?->fecha?->toDateString();
+
+            if ($value === $fechaOriginal) {
+                return;
+            }
+
+            $feriado = app(CalendarioLaboral::class)->feriado($value);
+
+            if ($feriado !== null) {
+                $fail('No se puede registrar asistencia en un dia feriado'
+                    .($feriado->nombre ? ' ('.$feriado->nombre.')' : '').'.');
+            }
+        };
     }
 
     /**

@@ -29,13 +29,19 @@
         ])
     @endif
 
-    @unless ($diaHabil)
+    @if ($feriadoHoy)
+        <div class="alert alert-warning">
+            <i class="fas fa-calendar-times mr-1"></i>
+            Hoy es feriado{{ $feriadoHoy->nombre ? ': '.$feriadoHoy->nombre : '' }}.
+            No se registran asistencias.
+        </div>
+    @elseif (! $diaHabil)
         <div class="alert alert-warning">
             <i class="fas fa-ban mr-1"></i>
             Hoy es {{ now()->translatedFormat('l') }}. No se registran asistencias
             en sábado ni domingo.
         </div>
-    @endunless
+    @endif
 
     {{-- El informe final cierra el periodo: ya no se aceptan registros --}}
     @if ($periodoCerrado)

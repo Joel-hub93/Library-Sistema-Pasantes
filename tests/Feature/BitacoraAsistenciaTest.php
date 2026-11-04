@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Asistencia;
 use App\Models\Pasante;
 use App\Services\BitacoraAsistencia;
+use App\Services\CalendarioLaboral;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Tests\TestCase;
@@ -25,7 +26,7 @@ class BitacoraAsistenciaTest extends TestCase
     {
         parent::setUp();
 
-        $this->bitacora = new BitacoraAsistencia;
+        $this->bitacora = new BitacoraAsistencia(new CalendarioLaboral);
     }
 
     private function pasante(): Pasante
